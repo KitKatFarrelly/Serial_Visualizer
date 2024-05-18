@@ -1,5 +1,6 @@
 use eframe::egui;
 use egui::{RichText, FontId, Color32};
+use serialport::{available_ports, SerialPortType};
 
 fn main() -> Result<(), eframe::Error>  
 {
@@ -20,6 +21,7 @@ struct MainFrame
     //Put State here
     connect_button_color: Color32,
     num_rows: u32,
+    selected_com: String,
 }
 
 impl Default for MainFrame 
@@ -31,10 +33,33 @@ impl Default for MainFrame
             //Put defaults for data in the MainFrame Struct
             connect_button_color: Color32::RED,
             num_rows: 30,
+            selected_com: "No Ports".to_string(),
         }
     }
 }
 
+fn returnUartList() -> Vec<String>
+{
+    let mut usbComList = Vec::<String>::new();
+    match available_ports()
+    {
+        Ok(ports) => 
+        {
+            
+            for p in ports
+            {
+                if let SerialPortType::UsbPort(info) = p.port_type
+                {
+                    //append name to list
+                    usbComList.push(p.port_name);
+                }
+            }
+            
+        }
+        Err(e) => {}
+    }
+    return usbComList;
+}
 
 impl eframe::App for MainFrame 
 {
@@ -47,6 +72,17 @@ impl eframe::App for MainFrame
                 //send some serial data through COM Port. Change Color once connected.
                 self.connect_button_color = Color32::GREEN;
             }
+            egui::ComboBox::from_id_source("my-combobox")
+                .selected_text(format!("{}", self.selected_com))
+                .show_ui(ui, |ui|
+                {
+                    let sel_com_borrow = &mut self.selected_com;
+                    for p in returnUartList()
+                    {
+                        let str_copy = p.clone();
+                        ui.selectable_value(sel_com_borrow, p, str_copy);
+                    }
+                });
             //Console Logs at bottom
             ui.heading("Output Log:");
             let default_spacing = ui.spacing().item_spacing.y;
