@@ -1,6 +1,7 @@
-use eframe::egui;
+use eframe::egui::{self, ecolor::ecolor_assert};
 use egui::{RichText, FontId, Color32};
 use serialport::{available_ports, SerialPortType, SerialPort};
+use std::collections::VecDeque;
 
 fn main() -> Result<(), eframe::Error>  
 {
@@ -20,9 +21,11 @@ struct MainFrame
 {
     //Put State here
     connect_button_color: Color32,
-    num_rows: u32,
     selected_com: String,
     serial_port: Option<Box<dyn SerialPort>>,
+    console_log: VecDeque<String>,
+    last_incomplete_msg: Option<Vec<u8>>,
+    console_log_iter: usize,
 }
 
 impl Default for MainFrame 
@@ -33,9 +36,11 @@ impl Default for MainFrame
         {
             //Put defaults for data in the MainFrame Struct
             connect_button_color: Color32::RED,
-            num_rows: 30,
             selected_com: "No Ports".to_string(),
             serial_port: None,
+            console_log: VecDeque::from(vec!["".to_string(); 30]),
+            last_incomplete_msg: None,
+            console_log_iter: 0,
         }
     }
 }
@@ -86,12 +91,13 @@ impl eframe::App for MainFrame
                     }
                     
                 }
-                else if self.serial_port.is_some()
+                else 
                 {
                     // Disconnect From Serial Port
                     self.serial_port = None;
                 }
             }
+            //Business logic for Serial First, after running connection logic
             if self.serial_port.is_none() || !returnUartList().contains(&self.selected_com)
             {
                 self.connect_button_color = Color32::RED;
@@ -108,16 +114,81 @@ impl eframe::App for MainFrame
                         }
                     });
             }
+            else
+            {
+                //Read up to 1000 bytes and slice into lines
+                let mut serial_buf: Vec<u8> = vec![0; 1000];
+                match self.serial_port.as_mut().unwrap().bytes_to_read()
+                {
+                    Ok(num_bytes) =>
+                    {
+                        println!("bytes to read: {}", num_bytes);
+                        if num_bytes > 0
+                        {
+                            match self.serial_port.as_mut().unwrap().read(serial_buf.as_mut_slice())
+                            {
+                                Ok(t) => 
+                                {
+                                    /*
+                                    let mut buf_lower_iter = 0;
+                                    for buf_iter in 0..t
+                                    {
+                                        //check if line feed or carriage return and end line there
+                                        if serial_buf[buf_iter] == 0x0A || serial_buf[buf_iter] == 0x0D
+                                        {
+                                            if buf_iter - buf_lower_iter > 1
+                                            {
+                                                //need to check for invalid characters in these eventually
+                                                let mut str_vec = Vec::new();
+                                                if self.last_incomplete_msg.is_some()
+                                                {
+                                                    str_vec.extend(self.last_incomplete_msg.as_ref().unwrap());
+                                                }
+                                                str_vec.extend_from_slice(&serial_buf[buf_lower_iter..buf_iter]);
+                                                if self.console_log_iter < self.console_log.len()
+                                                {
+                                                    self.console_log[self.console_log_iter] = String::from_utf8(str_vec).expect("not utf8");
+                                                }
+                                                else
+                                                {
+                                                    self.console_log.push_back(String::from_utf8(str_vec).expect("not utf8"));
+                                                }
+                                                if(self.console_log_iter < 2000)
+                                                {
+                                                    self.console_log_iter += 1;
+                                                }
+                                                else
+                                                {
+                                                    self.console_log.pop_front();
+                                                }
+                                            }
+                                            buf_lower_iter = buf_iter;
+                                        }
+                                    }
+                                    if buf_lower_iter < t
+                                    {
+                                        self.last_incomplete_msg = Some(serial_buf[buf_lower_iter..t].to_vec());
+                                    }
+                                    */
+                                    println!("{}",String::from_utf8(serial_buf[..t].to_vec()).expect("not utf8"));
+                                },
+                                Err(e) => eprintln!("{:?}", e),
+                            }
+                        }
+                    },
+                    Err(e) => eprintln!("{:?}", e),
+                }
+            }
             //Console Logs at bottom
             ui.heading("Output Log:");
             let default_spacing = ui.spacing().item_spacing.y;
             ui.spacing_mut().item_spacing.y = 0.0;
             egui::ScrollArea::vertical().auto_shrink([false; 2]).max_height(400.0).max_width(1130.0).show(ui, |ui|
             {
-                for row in 0..self.num_rows 
+                for row in 0..self.console_log.len() 
                 {
                     ui.add(egui::Label::new(RichText::new(format!("{:160}",
-                        "placeholder text for console log. Replace with actual console log text."))
+                        self.console_log[row]))
                         .color(Color32::GREEN)
                         .background_color(Color32::BLACK)
                         .font(FontId::monospace(12.0))).truncate(true));
