@@ -1,6 +1,6 @@
 use eframe::egui;
 use egui::{RichText, FontId, Color32};
-use serialport::{available_ports, SerialPortType};
+use serialport::{available_ports, SerialPortType, SerialPort};
 
 fn main() -> Result<(), eframe::Error>  
 {
@@ -22,6 +22,7 @@ struct MainFrame
     connect_button_color: Color32,
     num_rows: u32,
     selected_com: String,
+    serial_port: Option<Box<dyn SerialPort>>,
 }
 
 impl Default for MainFrame 
@@ -34,6 +35,7 @@ impl Default for MainFrame
             connect_button_color: Color32::RED,
             num_rows: 30,
             selected_com: "No Ports".to_string(),
+            serial_port: None,
         }
     }
 }
@@ -69,20 +71,43 @@ impl eframe::App for MainFrame
         {
             if ui.add(egui::Button::new(RichText::new(format!("Connect To Robot")).color(Color32::BLACK).font(FontId::proportional(20.0))).fill(self.connect_button_color)).clicked()
             {
-                //send some serial data through COM Port. Change Color once connected.
-                self.connect_button_color = Color32::GREEN;
-            }
-            egui::ComboBox::from_id_source("my-combobox")
-                .selected_text(format!("{}", self.selected_com))
-                .show_ui(ui, |ui|
+                if self.serial_port.is_none()
                 {
-                    let sel_com_borrow = &mut self.selected_com;
-                    for p in returnUartList()
+                    // Connect To Serial Port
+                    let new_connection = serialport::new(&self.selected_com, 115200).open();
+                    match new_connection
                     {
-                        let str_copy = p.clone();
-                        ui.selectable_value(sel_com_borrow, p, str_copy);
+                        Ok(conn) => 
+                        {
+                            self.serial_port = Some(conn);
+                            self.connect_button_color = Color32::GREEN;
+                        },
+                        Err(e) => {eprintln!("Failed to open \"{}\". Error: {}", &self.selected_com, e)},
                     }
-                });
+                    
+                }
+                else if self.serial_port.is_some()
+                {
+                    // Disconnect From Serial Port
+                    self.serial_port = None;
+                }
+            }
+            if self.serial_port.is_none() || !returnUartList().contains(&self.selected_com)
+            {
+                self.connect_button_color = Color32::RED;
+                self.serial_port = None;
+                egui::ComboBox::from_id_source("my-combobox")
+                    .selected_text(format!("{}", self.selected_com))
+                    .show_ui(ui, |ui|
+                    {
+                        let sel_com_borrow = &mut self.selected_com;
+                        for p in returnUartList()
+                        {
+                            let str_copy = p.clone();
+                            ui.selectable_value(sel_com_borrow, p, str_copy);
+                        }
+                    });
+            }
             //Console Logs at bottom
             ui.heading("Output Log:");
             let default_spacing = ui.spacing().item_spacing.y;
