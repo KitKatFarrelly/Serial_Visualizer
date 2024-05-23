@@ -2,6 +2,8 @@ use eframe::egui::{self, ecolor::ecolor_assert};
 use egui::{RichText, FontId, Color32};
 use serialport::{available_ports, SerialPortType, SerialPort};
 use std::collections::VecDeque;
+use std::num::NonZeroI128;
+use std::time::Duration;
 
 fn main() -> Result<(), eframe::Error>  
 {
@@ -26,6 +28,10 @@ struct MainFrame
     console_log: VecDeque<String>,
     last_incomplete_msg: Option<Vec<u8>>,
     console_log_iter: usize,
+    input_text: String,
+    currently_reading_raw: bool,
+    raw_start_idx: i32,
+    current_raw_size: i32,
 }
 
 impl Default for MainFrame 
@@ -41,8 +47,17 @@ impl Default for MainFrame
             console_log: VecDeque::from(vec!["".to_string(); 30]),
             last_incomplete_msg: None,
             console_log_iter: 0,
+            input_text: "".to_string(),
+            currently_reading_raw: false,
+            raw_start_idx: 0,
+            current_raw_size: 0,
         }
     }
+}
+
+fn handleRawData(raw_frame: Vec<u8>)
+{
+    //send raw data frames to their proper handler.
 }
 
 fn returnUartList() -> Vec<String>
@@ -79,7 +94,7 @@ impl eframe::App for MainFrame
                 if self.serial_port.is_none()
                 {
                     // Connect To Serial Port
-                    let new_connection = serialport::new(&self.selected_com, 115200).open();
+                    let new_connection = serialport::new(&self.selected_com, 115200).timeout(Duration::from_millis(10)).open();
                     match new_connection
                     {
                         Ok(conn) => 
@@ -122,19 +137,43 @@ impl eframe::App for MainFrame
                 {
                     Ok(num_bytes) =>
                     {
-                        println!("bytes to read: {}", num_bytes);
                         if num_bytes > 0
                         {
                             match self.serial_port.as_mut().unwrap().read(serial_buf.as_mut_slice())
                             {
                                 Ok(t) => 
                                 {
-                                    /*
                                     let mut buf_lower_iter = 0;
                                     for buf_iter in 0..t
                                     {
-                                        //check if line feed or carriage return and end line there
-                                        if serial_buf[buf_iter] == 0x0A || serial_buf[buf_iter] == 0x0D
+                                        //check if we're reading a raw line first. raw data needs to be handled differently.
+                                        if self.currently_reading_raw
+                                        {
+                                            if self.current_raw_size == 0 && ((buf_iter as i32 - self.raw_start_idx) == 4)
+                                            {
+                                                self.current_raw_size = serial_buf[buf_iter] as i32;
+                                            }
+                                            if (buf_iter as i32 - self.raw_start_idx) >= (self.current_raw_size + 7)
+                                            {
+                                                let mut raw_vec = Vec::new();
+                                                if self.last_incomplete_msg.is_some()
+                                                {
+                                                    raw_vec.extend(self.last_incomplete_msg.as_ref().unwrap());
+                                                    self.last_incomplete_msg = None;
+                                                }
+                                                raw_vec.extend_from_slice(&serial_buf[buf_lower_iter..(buf_iter-1)]);
+                                                //at this point, we can send the raw data vector to the data handler.
+                                                handleRawData(raw_vec);
+                                                self.currently_reading_raw = false;
+                                                buf_lower_iter = buf_iter + 1; //technically ends at first byte of next string
+                                            }
+                                            else
+                                            {
+                                                continue
+                                            }
+                                        }
+                                        //check if line feed or carriage return or raw data start and end line there
+                                        else if serial_buf[buf_iter] == 0x0A || serial_buf[buf_iter] == 0x0D || serial_buf[buf_iter] == 0xFE
                                         {
                                             if buf_iter - buf_lower_iter > 1
                                             {
@@ -143,8 +182,9 @@ impl eframe::App for MainFrame
                                                 if self.last_incomplete_msg.is_some()
                                                 {
                                                     str_vec.extend(self.last_incomplete_msg.as_ref().unwrap());
+                                                    self.last_incomplete_msg = None;
                                                 }
-                                                str_vec.extend_from_slice(&serial_buf[buf_lower_iter..buf_iter]);
+                                                str_vec.extend_from_slice(&serial_buf[buf_lower_iter..(buf_iter-1)]);
                                                 if self.console_log_iter < self.console_log.len()
                                                 {
                                                     self.console_log[self.console_log_iter] = String::from_utf8(str_vec).expect("not utf8");
@@ -162,15 +202,22 @@ impl eframe::App for MainFrame
                                                     self.console_log.pop_front();
                                                 }
                                             }
-                                            buf_lower_iter = buf_iter;
+                                            buf_lower_iter = buf_iter + 1;
+                                            if serial_buf[buf_iter] == 0xFE
+                                            {
+                                                self.currently_reading_raw = true;
+                                                self.raw_start_idx = buf_iter as i32;
+                                            }
                                         }
                                     }
                                     if buf_lower_iter < t
                                     {
                                         self.last_incomplete_msg = Some(serial_buf[buf_lower_iter..t].to_vec());
+                                        if self.raw_start_idx > 0
+                                        {
+                                            self.raw_start_idx = self.raw_start_idx - t as i32;
+                                        }
                                     }
-                                    */
-                                    println!("{}",String::from_utf8(serial_buf[..t].to_vec()).expect("not utf8"));
                                 },
                                 Err(e) => eprintln!("{:?}", e),
                             }
@@ -194,7 +241,26 @@ impl eframe::App for MainFrame
                         .font(FontId::monospace(12.0))).truncate(true));
                 }
             });
-            
+            ui.spacing_mut().item_spacing.y = default_spacing;
+            //Text box to send text with
+            ui.horizontal(|ui| {
+                ui.add(egui::TextEdit::singleline(&mut self.input_text).hint_text("send command"));
+                if ui.add(egui::Button::new("Send")).clicked()
+                {
+                    if self.serial_port.is_some()
+                    {
+                        self.input_text.push_str("\n");
+                        match self.serial_port.as_mut().unwrap().write(self.input_text.as_bytes()) {
+                            Ok(_) => {
+                                println!("{}", &self.input_text);
+                                self.input_text = "".to_string();
+                            }
+                            Err(e) => eprintln!("{:?}", e),
+                        }
+                    }
+                }
+            });
+            ui.end_row();
         });
     }
 }
