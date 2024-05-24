@@ -5,6 +5,8 @@ use std::collections::VecDeque;
 use std::num::NonZeroI128;
 use std::time::Duration;
 
+const raw_data_header: usize = 6;
+
 fn main() -> Result<(), eframe::Error>  
 {
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
@@ -35,8 +37,8 @@ struct MainFrame
     //Displayed Data
     tof_frame_matrix: Vec<u32>,
     imu_timestamp: u32,
-    accel_matrix: Vec<i32>,
-    gyro_matrix: Vec<i32>,
+    accel_matrix: Vec<f32>,
+    gyro_matrix: Vec<f32>,
 }
 
 trait InternalHandlers
@@ -64,8 +66,8 @@ impl Default for MainFrame
             //Displayed Data
             tof_frame_matrix: vec![0;64],
             imu_timestamp: 0,
-            accel_matrix: vec![0;3],
-            gyro_matrix: vec![0;3],
+            accel_matrix: vec![0.0;3],
+            gyro_matrix: vec![0.0;3],
         }
     }
 }
@@ -113,22 +115,66 @@ impl InternalHandlers for MainFrame
             0 =>
             {
                 //empty timestamp from imu
+                if(raw_frame[4] == 3)
+                {
+                    self.imu_timestamp = (raw_frame[raw_data_header] as u32) + ((raw_frame[raw_data_header + 1] as u32) << 8) + ((raw_frame[raw_data_header + 2]  as u32) << 16);
+                }
             },
             1 =>
             {
                 //only acceleration data
+                if(raw_frame[4] == 9)
+                {
+                    for iter in 0..3
+                    {
+                        // 4g max range, 256 for half of 16 bit width
+                        let accel_dat = (raw_frame[raw_data_header + 3 + 2*iter] as u32) + ((raw_frame[raw_data_header + 4 + 2*iter] as u32) << 8);
+                        self.accel_matrix[iter] = 4.0 * (accel_dat as f32) / 256.0;
+                    }
+                }
             },
             2 =>
             {
                 //only gyro data
+                if(raw_frame[4] == 9)
+                {
+                    for iter in 0..3
+                    {
+                        // 2000dps max range, 256 for half of 16 bit width
+                        let gyro_dat = (raw_frame[raw_data_header + 3 + 2*iter] as u32) + ((raw_frame[raw_data_header + 4 + 2*iter] as u32) << 8);
+                        self.gyro_matrix[iter] = 2000.0 * (gyro_dat as f32) / 256.0;
+                    }
+                }
             },
             3 =>
             {
                 //both acc and gyro data
+                if(raw_frame[4] == 15)
+                {
+                    for iter in 0..3
+                    {
+                        // 2000dps max range, 256 for half of 16 bit width
+                        let accel_dat = (raw_frame[raw_data_header + 3 + 2*iter] as u32) + ((raw_frame[raw_data_header + 4 + 2*iter] as u32) << 8);
+                        self.accel_matrix[iter] = 4.0 * (accel_dat as f32) / 256.0;
+                        let gyro_dat = (raw_frame[raw_data_header + 9 + 2*iter] as u32) + ((raw_frame[raw_data_header + 10 + 2*iter] as u32) << 8);
+                        self.gyro_matrix[iter] = 2000.0 * (gyro_dat as f32) / 256.0;
+                    }
+                }
             },
             4 =>
             {
                 //tof data
+                if(raw_frame[4] == 128)
+                {
+                    for iter in 0..64
+                    {
+                        self.tof_frame_matrix[iter] = (raw_frame[raw_data_header + 2*iter] as u32) + ((raw_frame[raw_data_header + 1 + 2*iter] as u32) << 8);
+                    }
+                }
+                else if(raw_frame[4] == 32)
+                {
+                    println!("not handling 4x4 matrix data");
+                }
             },
             _ =>
             {
