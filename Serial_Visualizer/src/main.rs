@@ -9,7 +9,7 @@ fn main() -> Result<(), eframe::Error>
 {
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([720.0, 480.0]),
+        viewport: egui::ViewportBuilder::default().with_inner_size([1200.0, 520.0]),
         ..Default::default()
     };
     eframe::run_native(
@@ -55,9 +55,20 @@ impl Default for MainFrame
     }
 }
 
+fn testChecksum(raw_frame: &Vec<u8>) -> bool
+{
+    let mut checksum: u8 = 0;
+    for dat in raw_frame
+    {
+        checksum = checksum ^ dat;
+    }
+    return checksum == 0;
+}
+
 fn handleRawData(raw_frame: Vec<u8>)
 {
     //send raw data frames to their proper handler.
+    println!("passed checksum");
 }
 
 fn returnUartList() -> Vec<String>
@@ -153,7 +164,7 @@ impl eframe::App for MainFrame
                                             {
                                                 self.current_raw_size = serial_buf[buf_iter] as i32;
                                             }
-                                            if (buf_iter as i32 - self.raw_start_idx) >= (self.current_raw_size + 7)
+                                            if (buf_iter as i32 - self.raw_start_idx) >= (self.current_raw_size + 8)
                                             {
                                                 let mut raw_vec = Vec::new();
                                                 if self.last_incomplete_msg.is_some()
@@ -161,11 +172,18 @@ impl eframe::App for MainFrame
                                                     raw_vec.extend(self.last_incomplete_msg.as_ref().unwrap());
                                                     self.last_incomplete_msg = None;
                                                 }
-                                                raw_vec.extend_from_slice(&serial_buf[buf_lower_iter..(buf_iter-1)]);
+                                                if buf_iter - buf_lower_iter > 1
+                                                {
+                                                    raw_vec.extend_from_slice(&serial_buf[buf_lower_iter..(buf_iter - 1)]);
+                                                }
                                                 //at this point, we can send the raw data vector to the data handler.
-                                                handleRawData(raw_vec);
+                                                if(testChecksum(&raw_vec))
+                                                {
+                                                    handleRawData(raw_vec);
+                                                }
                                                 self.currently_reading_raw = false;
-                                                buf_lower_iter = buf_iter + 1; //technically ends at first byte of next string
+                                                self.current_raw_size = 0;
+                                                buf_lower_iter = buf_iter; //technically ends at first byte of next string
                                             }
                                             else
                                             {
@@ -185,13 +203,24 @@ impl eframe::App for MainFrame
                                                     self.last_incomplete_msg = None;
                                                 }
                                                 str_vec.extend_from_slice(&serial_buf[buf_lower_iter..(buf_iter-1)]);
-                                                if self.console_log_iter < self.console_log.len()
+                                                match String::from_utf8(str_vec)
                                                 {
-                                                    self.console_log[self.console_log_iter] = String::from_utf8(str_vec).expect("not utf8");
-                                                }
-                                                else
-                                                {
-                                                    self.console_log.push_back(String::from_utf8(str_vec).expect("not utf8"));
+                                                    Ok(full_str) =>
+                                                    {
+                                                        if self.console_log_iter < self.console_log.len()
+                                                        {
+                                                            
+                                                            self.console_log[self.console_log_iter] = full_str;
+                                                        }
+                                                        else
+                                                        {
+                                                            self.console_log.push_back(full_str);
+                                                        }
+                                                    }
+                                                    Err(e) =>
+                                                    {
+                                                        println!("not a valid utf-8 string, dropping.");
+                                                    }
                                                 }
                                                 if(self.console_log_iter < 2000)
                                                 {
@@ -205,6 +234,7 @@ impl eframe::App for MainFrame
                                             buf_lower_iter = buf_iter + 1;
                                             if serial_buf[buf_iter] == 0xFE
                                             {
+                                                buf_lower_iter = buf_iter;
                                                 self.currently_reading_raw = true;
                                                 self.raw_start_idx = buf_iter as i32;
                                             }
@@ -230,7 +260,7 @@ impl eframe::App for MainFrame
             ui.heading("Output Log:");
             let default_spacing = ui.spacing().item_spacing.y;
             ui.spacing_mut().item_spacing.y = 0.0;
-            egui::ScrollArea::vertical().auto_shrink([false; 2]).max_height(400.0).max_width(1130.0).show(ui, |ui|
+            egui::ScrollArea::vertical().stick_to_bottom(true).auto_shrink([false; 2]).max_height(400.0).max_width(1130.0).show(ui, |ui|
             {
                 for row in 0..self.console_log.len() 
                 {
@@ -242,6 +272,7 @@ impl eframe::App for MainFrame
                 }
             });
             ui.spacing_mut().item_spacing.y = default_spacing;
+            ui.add_space(8.0);
             //Text box to send text with
             ui.horizontal(|ui| {
                 ui.add(egui::TextEdit::singleline(&mut self.input_text).hint_text("send command"));
@@ -261,6 +292,7 @@ impl eframe::App for MainFrame
                 }
             });
             ui.end_row();
+            ctx.request_repaint();
         });
     }
 }
