@@ -32,6 +32,16 @@ struct MainFrame
     currently_reading_raw: bool,
     raw_start_idx: i32,
     current_raw_size: i32,
+    //Displayed Data
+    tof_frame_matrix: Vec<u32>,
+    imu_timestamp: u32,
+    accel_matrix: Vec<i32>,
+    gyro_matrix: Vec<i32>,
+}
+
+trait InternalHandlers
+{
+    fn handleRawData(&mut self, raw_frame: Vec<u8>);
 }
 
 impl Default for MainFrame 
@@ -51,6 +61,11 @@ impl Default for MainFrame
             currently_reading_raw: false,
             raw_start_idx: 0,
             current_raw_size: 0,
+            //Displayed Data
+            tof_frame_matrix: vec![0;64],
+            imu_timestamp: 0,
+            accel_matrix: vec![0;3],
+            gyro_matrix: vec![0;3],
         }
     }
 }
@@ -63,12 +78,6 @@ fn testChecksum(raw_frame: &Vec<u8>) -> bool
         checksum = checksum ^ dat;
     }
     return checksum == 0;
-}
-
-fn handleRawData(raw_frame: Vec<u8>)
-{
-    //send raw data frames to their proper handler.
-    println!("passed checksum");
 }
 
 fn returnUartList() -> Vec<String>
@@ -92,6 +101,42 @@ fn returnUartList() -> Vec<String>
         Err(e) => {}
     }
     return usbComList;
+}
+
+impl InternalHandlers for MainFrame
+{
+    fn handleRawData(&mut self, raw_frame: Vec<u8>)
+    {
+        //send raw data frames to their proper handler.
+        match raw_frame[5]
+        {
+            0 =>
+            {
+                //empty timestamp from imu
+            },
+            1 =>
+            {
+                //only acceleration data
+            },
+            2 =>
+            {
+                //only gyro data
+            },
+            3 =>
+            {
+                //both acc and gyro data
+            },
+            4 =>
+            {
+                //tof data
+            },
+            _ =>
+            {
+                //default
+                println!("invalid data type");
+            }
+        }
+    }
 }
 
 impl eframe::App for MainFrame 
@@ -179,7 +224,7 @@ impl eframe::App for MainFrame
                                                 //at this point, we can send the raw data vector to the data handler.
                                                 if(testChecksum(&raw_vec))
                                                 {
-                                                    handleRawData(raw_vec);
+                                                    InternalHandlers::handleRawData(self, raw_vec);
                                                 }
                                                 self.currently_reading_raw = false;
                                                 self.current_raw_size = 0;
