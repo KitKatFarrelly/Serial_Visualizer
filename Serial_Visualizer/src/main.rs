@@ -1,5 +1,5 @@
 use eframe::egui::{self, ecolor::ecolor_assert};
-use egui::{RichText, FontId, Color32};
+use egui::{RichText, FontId, Color32, Vec2, Pos2, Rect, Sense};
 use serialport::{available_ports, SerialPortType, SerialPort};
 use std::collections::VecDeque;
 use std::num::NonZeroI128;
@@ -11,7 +11,7 @@ fn main() -> Result<(), eframe::Error>
 {
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([1200.0, 520.0]),
+        viewport: egui::ViewportBuilder::default().with_inner_size([1200.0, 800.0]),
         ..Default::default()
     };
     eframe::run_native(
@@ -39,6 +39,7 @@ struct MainFrame
     imu_timestamp: u32,
     accel_matrix: Vec<f32>,
     gyro_matrix: Vec<f32>,
+    tof_max_dist: u32,
 }
 
 trait InternalHandlers
@@ -68,6 +69,7 @@ impl Default for MainFrame
             imu_timestamp: 0,
             accel_matrix: vec![0.0;3],
             gyro_matrix: vec![0.0;3],
+            tof_max_dist: 1,
         }
     }
 }
@@ -164,11 +166,16 @@ impl InternalHandlers for MainFrame
             4 =>
             {
                 //tof data
+                self.tof_max_dist = 1;
                 if(raw_frame[4] == 128)
                 {
                     for iter in 0..64
                     {
                         self.tof_frame_matrix[iter] = (raw_frame[raw_data_header + 2*iter] as u32) + ((raw_frame[raw_data_header + 1 + 2*iter] as u32) << 8);
+                        if self.tof_frame_matrix[iter] > self.tof_max_dist
+                        {
+                            self.tof_max_dist = self.tof_frame_matrix[iter];
+                        }
                     }
                 }
                 else if(raw_frame[4] == 32)
@@ -233,6 +240,29 @@ impl eframe::App for MainFrame
             }
             else
             {
+                ui.horizontal(|ui|{
+                    if ui.add(egui::Button::new("Enable Serialization")).clicked()
+                    {
+                        let enable_ser_text = "uart set_serialize true\n";
+                        match self.serial_port.as_mut().unwrap().write(enable_ser_text.as_bytes()) {
+                            Ok(_) => {
+                                println!("{}", &enable_ser_text);
+                            }
+                            Err(e) => eprintln!("{:?}", e),
+                        }
+                    }
+                    if ui.add(egui::Button::new("Start ToF Measurements")).clicked()
+                    {
+                        let enable_ser_text = "tof start_measurements\n";
+                        match self.serial_port.as_mut().unwrap().write(enable_ser_text.as_bytes()) {
+                            Ok(_) => {
+                                println!("{}", &enable_ser_text);
+                            }
+                            Err(e) => eprintln!("{:?}", e),
+                        }
+                    }
+                    ui.end_row();
+                });
                 //Read up to 1000 bytes and slice into lines
                 let mut serial_buf: Vec<u8> = vec![0; 1000];
                 match self.serial_port.as_mut().unwrap().bytes_to_read()
@@ -347,6 +377,47 @@ impl eframe::App for MainFrame
                     Err(e) => eprintln!("{:?}", e),
                 }
             }
+            //Visualize ToF Data and IMU data
+            ui.horizontal(|ui|{
+                //ToF data First
+                let (response, painter) = ui.allocate_painter(Vec2::new(384.0, 256.0), Sense::hover());
+                let rect = response.rect;
+                let top_left_tof = rect.left_top();
+                for row in 0..8
+                {
+                    for column in 0..8
+                    {
+                        let new_top_left = top_left_tof + Vec2::new((column as u16 * 32) as f32, (row as u16 * 32) as f32);
+                        let new_bottom_left = new_top_left + Vec2::new(32.0, 32.0);
+                        let new_tof_rect = Rect::from_two_pos(new_top_left, new_bottom_left);
+                        let dist_hue = (self.tof_frame_matrix[row * 8 + (7 - column)] as f32 / self.tof_max_dist as f32) * 0.875;
+                        let dist_color = eframe::epaint::Hsva::new(dist_hue, 1.0, 1.0, 1.0);
+                        painter.rect_filled(new_tof_rect, egui::Rounding::ZERO, Color32::from(dist_color));
+                    }
+                }
+                let top_left_guide = response.rect.left_top() + Vec2::new(288.0, 0.0);
+                for row_2 in 0..16
+                {
+                    let new_top_left = top_left_guide + Vec2::new(0.0, (row_2 as u16 * 16) as f32);
+                    let new_bottom_left = new_top_left + Vec2::new(32.0, 16.0);
+                    let new_tof_rect = Rect::from_two_pos(new_top_left, new_bottom_left);
+                    painter.rect_filled(new_tof_rect, egui::Rounding::ZERO, Color32::from(eframe::epaint::Hsva::new((row_2 as f32) / 16.0, 1.0, 1.0, 1.0)));
+                }
+                painter.text(
+                    rect.right_top() + Vec2::new(-60.0, 8.0),
+                    egui::Align2::LEFT_CENTER,
+                    format!("{:.0} mm", 0),
+                    FontId::proportional(12.0),
+                    Color32::BLACK,
+                );
+                painter.text(
+                    rect.right_bottom() + Vec2::new(-60.0, -8.0),
+                    egui::Align2::LEFT_CENTER,
+                    format!("{} mm", self.tof_max_dist),
+                    FontId::proportional(12.0),
+                    Color32::BLACK,
+                );
+            });
             //Console Logs at bottom
             ui.heading("Output Log:");
             let default_spacing = ui.spacing().item_spacing.y;
