@@ -36,6 +36,7 @@ struct MainFrame
     current_raw_size: i32,
     //Displayed Data
     tof_frame_matrix: Vec<u32>,
+    tof_frame_confidence: Vec<u8>,
     imu_timestamp: u32,
     accel_matrix: Vec<f32>,
     gyro_matrix: Vec<f32>,
@@ -66,6 +67,7 @@ impl Default for MainFrame
             current_raw_size: 0,
             //Displayed Data
             tof_frame_matrix: vec![0;64],
+            tof_frame_confidence: vec![0;64],
             imu_timestamp: 0,
             accel_matrix: vec![0.0;3],
             gyro_matrix: vec![0.0;3],
@@ -167,18 +169,19 @@ impl InternalHandlers for MainFrame
             {
                 //tof data
                 self.tof_max_dist = 1;
-                if(raw_frame[4] == 128)
+                if(raw_frame[4] == 192)
                 {
                     for iter in 0..64
                     {
-                        self.tof_frame_matrix[iter] = (raw_frame[raw_data_header + 2*iter] as u32) + ((raw_frame[raw_data_header + 1 + 2*iter] as u32) << 8);
+                        self.tof_frame_matrix[iter] = (raw_frame[raw_data_header + 3*iter] as u32) + ((raw_frame[raw_data_header + 1 + 3*iter] as u32) << 8);
+                        self.tof_frame_confidence[iter] = raw_frame[raw_data_header + 2 + 3*iter];
                         if self.tof_frame_matrix[iter] > self.tof_max_dist
                         {
                             self.tof_max_dist = self.tof_frame_matrix[iter];
                         }
                     }
                 }
-                else if(raw_frame[4] == 32)
+                else if(raw_frame[4] == 48)
                 {
                     println!("not handling 4x4 matrix data");
                 }
@@ -393,6 +396,13 @@ impl eframe::App for MainFrame
                         let dist_hue = (self.tof_frame_matrix[row * 8 + (7 - column)] as f32 / self.tof_max_dist as f32) * 0.875;
                         let dist_color = eframe::epaint::Hsva::new(dist_hue, 1.0, 1.0, 1.0);
                         painter.rect_filled(new_tof_rect, egui::Rounding::ZERO, Color32::from(dist_color));
+                        painter.text(
+                            new_top_left + Vec2::new(16.0, 16.0),
+                            egui::Align2::CENTER_CENTER,
+                            format!("{:}", self.tof_frame_confidence[row * 8 + (7 - column)]),
+                            FontId::proportional(12.0),
+                            Color32::BLACK,
+                        );
                     }
                 }
                 let top_left_guide = response.rect.left_top() + Vec2::new(288.0, 0.0);
